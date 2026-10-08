@@ -30,29 +30,17 @@
 
     <section class="hero" id="hero" aria-label="Summary"></section>
 
+    <section class="monitor-bar" id="monitor" aria-label="Current monitor" aria-live="polite" hidden></section>
+
     <section class="toolbar" aria-label="Actions">
-      <button type="button" id="btn-copy" class="btn btn-primary">Copy report</button>
-      <button type="button" id="btn-json" class="btn">Download JSON</button>
-      <button type="button" id="btn-refresh" class="btn">Re-measure refresh rate</button>
-      <button type="button" id="btn-monitors" class="btn">Detect all monitors</button>
+      <button type="button" id="btn-json" class="btn btn-primary">Download JSON</button>
+      <span class="toolbar-note muted">Includes full display, window, system and preference details.</span>
     </section>
-
-    <section class="card viz-card" aria-label="Window position on screen">
-      <div class="viz-text">
-        <h2>Window on screen</h2>
-        <p class="muted">Where this browser window sits on your current screen. Resize or move the window, change zoom, or drag it to another monitor and the values update automatically.</p>
-      </div>
-      <div class="viz" id="viz"></div>
-    </section>
-
-    <div class="sections" id="sections"></div>
   </main>
 
   <footer class="wrap site-footer">
     <p>Everything is detected locally in your browser. Nothing is sent or stored anywhere.</p>
   </footer>
-
-  <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="app.js"></script>
 </body>

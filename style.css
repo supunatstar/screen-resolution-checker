@@ -184,102 +184,52 @@ h1, h2, h3 { margin: 0; line-height: 1.25; }
 .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .btn-primary:hover { background: var(--accent); filter: brightness(1.08); }
 .btn[disabled] { opacity: 0.6; cursor: progress; }
+.toolbar { align-items: center; }
 
-/* Cards */
-.card {
+/* Current monitor (only shown with more than one monitor) */
+.monitor-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
   background: var(--surface);
   border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  padding: 18px;
-  min-width: 0;
-}
-.card h2 { font-size: 1rem; font-weight: 650; margin-bottom: 8px; }
-
-/* Visualiser */
-.viz-card {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
-  gap: 24px;
-  align-items: center;
+  padding: 14px 18px;
   margin-bottom: 16px;
 }
-.viz-text p { margin: 0; font-size: 0.9rem; }
-.viz { width: 100%; max-width: 520px; justify-self: center; }
-.viz-screen {
+.monitor-bar[hidden] { display: none; }
+.monitor-icon { width: 30px; height: 30px; color: var(--accent); flex: none; }
+.monitor-text { flex: 1 1 260px; min-width: 0; font-size: 0.9rem; }
+.monitor-title { font-size: 1.05rem; font-weight: 650; border-radius: 4px; }
+.monitor-note { font-size: 0.8rem; margin-top: 2px; }
+.monitor-map {
   position: relative;
-  width: 100%;
-  background: var(--surface-2);
-  border: 2px solid var(--muted);
-  border-radius: 6px;
-  overflow: hidden;
+  flex: none;
 }
-.viz-avail {
+.monitor-box {
   position: absolute;
-  border: 1px dashed var(--border);
-}
-.viz-window {
-  position: absolute;
-  background: var(--accent-soft);
-  border: 2px solid var(--accent);
-  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
-  text-align: center;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--accent);
-  overflow: hidden;
-  transition: left 0.2s, top 0.2s, width 0.2s, height 0.2s;
-}
-.viz-screen-label {
-  position: absolute;
-  right: 6px;
-  bottom: 4px;
-  font-size: 0.7rem;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-.viz-caption {
-  margin-top: 8px;
+  gap: 2px;
+  background: var(--surface-2);
+  border: 2px solid var(--border);
+  border-radius: 3px;
   font-size: 0.8rem;
+  font-weight: 650;
   color: var(--muted);
-  text-align: center;
+  margin: 0 1px;
 }
-
-/* Detail sections */
-.sections {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
-  gap: 16px;
-  align-items: start;
+.monitor-box.is-current {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
 }
-.rows { margin: 0; }
-.row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
-  gap: 4px 16px;
-  padding: 9px 0;
-  border-top: 1px solid var(--border);
-}
-.row:first-child { border-top: 0; }
-.row dt { color: var(--muted); font-size: 0.9rem; }
-.row dd {
-  margin: 0;
-  font-family: var(--mono);
-  font-size: 0.88rem;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  overflow-wrap: anywhere;
-  border-radius: 4px;
-}
-.row .hint {
-  grid-column: 1 / -1;
-  font-size: 0.78rem;
-  color: var(--muted);
-  margin-top: -2px;
-}
+.monitor-primary { font-size: 0.65rem; }
+.toolbar-note { font-size: 0.85rem; }
 
 .changed { animation: flash 1.2s ease-out; }
 @keyframes flash { from { background: var(--flash); } to { background: transparent; } }
@@ -299,33 +249,11 @@ h1, h2, h3 { margin: 0; line-height: 1.25; }
   padding-bottom: 32px;
 }
 
-.toast {
-  position: fixed;
-  left: 50%;
-  bottom: 24px;
-  transform: translate(-50%, 20px);
-  background: var(--text);
-  color: var(--bg);
-  padding: 10px 16px;
-  border-radius: 8px;
-  font-size: 0.9rem;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s, transform 0.2s;
-  max-width: calc(100% - 32px);
-}
-.toast.show { opacity: 1; transform: translate(-50%, 0); }
-
 @media (max-width: 720px) {
-  .viz-card { grid-template-columns: 1fr; gap: 16px; }
   .stat-value { font-size: 1.6rem; }
   .tagline { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .live-dot, .changed { animation: none; }
-  .viz-window, .toast { transition: none; }
 }
-
-.row-wide dt { grid-column: 1 / -1; }
-.row-wide dd { grid-column: 1 / -1; text-align: left; font-size: 0.8rem; color: var(--muted); }

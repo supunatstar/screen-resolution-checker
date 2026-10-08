@@ -16,11 +16,11 @@
   const state = {
     initialDpr: window.devicePixelRatio || 1,
     refreshHz: null,
-    measuringRefresh: false,
+    refreshMeasurement: null,
     uaHigh: null,
-    monitors: null,
+    screenDetails: null,
+    monitorPermission: null,
     previous: new Map(),
-    lastReport: null,
   };
 
   // ---------- helpers ----------
@@ -93,32 +93,10 @@
     const uaData = navigator.userAgentData;
     if (!uaData || !uaData.getHighEntropyValues) return;
     try {
-      state.uaHigh = await uaData.getHighEntropyValues(['platformVersion', 'architecture', 'bitness', 'model', 'fullVersionList']);
+      // Only what's needed to name the OS and browser version; no device model or hardware details.
+      state.uaHigh = await uaData.getHighEntropyValues(['platformVersion', 'fullVersionList']);
       render();
     } catch (e) { /* not available */ }
-  }
-
-  function detectGpu() {
-    try {
-      const canvas = document.createElement('canvas');
-      const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-      if (!gl) return null;
-      const ext = gl.getExtension('WEBGL_debug_renderer_info');
-      const raw = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
-      const lose = gl.getExtension('WEBGL_lose_context');
-      if (lose) lose.loseContext();
-      // "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 (0x00002504) Direct3D11 vs_5_0 ps_5_0, D3D11)" -> "NVIDIA GeForce RTX 3060"
-      let name = raw;
-      const angle = raw.match(/^ANGLE \((.*)\)$/);
-      if (angle) {
-        const parts = angle[1].split(',');
-        name = (parts[1] || parts[0]).trim();
-      }
-      name = name.replace(/\s*\(0x[0-9a-f]+\)/i, '').replace(/\s*Direct3D.*$/i, '').trim();
-      return { name: name || raw, raw };
-    } catch (e) {
-      return null;
-    }
   }
 
   // ---------- zoom & scaling ----------
@@ -218,50 +196,215 @@
     });
   }
 
-  async function updateRefreshRate() {
-    if (state.measuringRefresh || document.hidden) return;
-    state.measuringRefresh = true;
-    $('btn-refresh').disabled = true;
-    const hz = await measureRefreshRate();
-    state.refreshHz = hz ? snap(hz, REFRESH_RATES, 0.04) : null;
-    state.measuringRefresh = false;
-    $('btn-refresh').disabled = false;
-    render();
+  function updateRefreshRate() {
+    if (state.refreshMeasurement) return state.refreshMeasurement;
+    if (document.hidden) return Promise.resolve();
+    state.refreshMeasurement = measureRefreshRate().then((hz) => {
+      state.refreshHz = hz ? snap(hz, REFRESH_RATES, 0.04) : null;
+      state.refreshMeasurement = null;
+    });
+    return state.refreshMeasurement;
   }
 
   // ---------- monitors ----------
 
-  async function detectMonitors() {
-    if (!('getScreenDetails' in window)) {
-      toast('Listing all monitors is only supported in Chrome and Edge on desktop.');
-      return;
+  // Exact details need the Window Management API (Chrome/Edge) and the user's permission.
+  // Only already-granted permission is used automatically; otherwise the user clicks "Identify all monitors".
+  async function initMonitors() {
+    if (!('getScreenDetails' in window) || !navigator.permissions) return;
+    for (const name of ['window-management', 'window-placement']) {
+      try {
+        const status = await navigator.permissions.query({ name });
+        state.monitorPermission = status.state;
+        status.addEventListener('change', () => { state.monitorPermission = status.state; render(); });
+        break;
+      } catch (e) { /* permission name not recognised by this browser version */ }
     }
-    try {
-      const details = await window.getScreenDetails();
-      const read = () => {
-        state.monitors = details.screens.map((s) => ({
-          label: s.label || '',
-          width: s.width,
-          height: s.height,
-          dpr: s.devicePixelRatio,
-          left: s.left,
-          top: s.top,
-          primary: s.isPrimary,
-          internal: s.isInternal,
-          current: s === details.currentScreen,
-        }));
-        render();
-      };
-      read();
-      details.addEventListener('screenschange', read);
-      details.addEventListener('currentscreenchange', read);
-      toast(`Found ${details.screens.length} monitor${details.screens.length === 1 ? '' : 's'}.`);
-    } catch (e) {
-      toast('Permission to read monitor details was denied.');
-    }
+    if (state.monitorPermission === 'granted') await loadScreenDetails();
+    else render();
   }
 
-  // ---------- data collection ----------
+  async function loadScreenDetails() {
+    try {
+      const details = await window.getScreenDetails();
+      state.screenDetails = details;
+      state.monitorPermission = 'granted';
+      details.addEventListener('screenschange', render);
+      details.addEventListener('currentscreenchange', () => { render(); updateRefreshRate(); });
+    } catch (e) {
+      state.monitorPermission = 'denied';
+    }
+    render();
+  }
+
+  function placement(vertical, horizontal) {
+    const where = [vertical, horizontal].filter(Boolean).join(' and ');
+    return where ? `Secondary, ${where} the primary monitor` : 'Secondary monitor';
+  }
+
+  function monitorInfo() {
+    const details = state.screenDetails;
+    if (details && details.screens.length) {
+      const current = details.currentScreen;
+      const isCurrent = (s) => s === current || (current && s.left === current.left && s.top === current.top && s.width === current.width && s.height === current.height);
+      // Numbered left to right (then top to bottom), matching the arrangement in the OS display settings.
+      const list = [...details.screens]
+        .sort((a, b) => a.left - b.left || a.top - b.top)
+        .map((s, i) => ({
+          number: i + 1,
+          width: Math.round(s.width * s.devicePixelRatio),
+          height: Math.round(s.height * s.devicePixelRatio),
+          scaling: Math.round(s.devicePixelRatio * 100),
+          left: s.left,
+          top: s.top,
+          logicalW: s.width,
+          logicalH: s.height,
+          primary: s.isPrimary,
+          internal: s.isInternal,
+          current: isCurrent(s),
+        }));
+      const cur = list.find((m) => m.current) || list[0];
+      const p = list.find((m) => m.primary) || list[0];
+      const slack = 8;
+      let where = 'Primary monitor';
+      if (!cur.primary) {
+        const v = cur.top + cur.logicalH <= p.top + slack ? 'above' : cur.top >= p.top + p.logicalH - slack ? 'below' : '';
+        const h = cur.left + cur.logicalW <= p.left + slack ? 'to the left of' : cur.left >= p.left + p.logicalW - slack ? 'to the right of' : '';
+        where = placement(v, h);
+      }
+      return { multiple: list.length > 1, exact: true, count: list.length, current: cur, primary: cur.primary, placement: where, list };
+    }
+
+    // Estimate: the primary monitor sits at the desktop origin (0, 0), so the current screen's
+    // work-area origin shows whether this is a secondary monitor and roughly where it is.
+    const x = screen.availLeft;
+    const y = screen.availTop;
+    let multiple = 'isExtended' in screen ? screen.isExtended : null;
+    if (typeof x !== 'number' || typeof y !== 'number') return { multiple, exact: false };
+    const taskbarX = screen.width - screen.availWidth;
+    const taskbarY = screen.height - screen.availHeight;
+    const primary = x >= 0 && x <= taskbarX && y >= 0 && y <= taskbarY;
+    if (!primary) multiple = true;
+    let where = 'Primary monitor';
+    if (!primary) {
+      const h = x < 0 ? 'to the left of' : x > taskbarX ? 'to the right of' : '';
+      const v = h ? '' : y < 0 ? 'above' : y > taskbarY ? 'below' : '';
+      where = placement(v, h);
+    }
+    return { multiple, exact: false, primary, placement: where, x, y };
+  }
+
+  function monitorRows(m) {
+    if (m.multiple === false) {
+      return [
+        { label: 'Multiple monitors', value: 'No' },
+        { label: "This window's monitor", value: 'Only monitor' },
+      ];
+    }
+    if (!m.multiple) return [{ label: 'Multiple monitors', value: 'Unknown' }];
+    const rows = [
+      { label: 'Multiple monitors', value: m.exact ? `Yes (${m.count})` : 'Yes' },
+      { label: "This window's monitor", value: m.exact ? `Monitor ${m.current.number} of ${m.count}` : m.primary ? 'Primary monitor' : 'Secondary monitor' },
+      { label: 'Primary monitor', value: yesNo(m.primary) },
+      { label: 'Position', value: m.placement },
+    ];
+    if (m.exact) {
+      rows.push({ label: 'Built-in display', value: yesNo(m.current.internal) });
+      rows.push({ label: 'Position on desktop', value: `x ${fmt(m.current.left)}, y ${fmt(m.current.top)}` });
+      rows.push({ label: 'Identified by', value: 'Window Management API (exact). Monitors are numbered left to right.' });
+    } else {
+      rows.push({ label: 'Position on desktop', value: `x ${fmt(m.x)}, y ${fmt(m.y)} (work area)` });
+      rows.push({ label: 'Identified by', value: 'Window position (estimated). Click "Identify all monitors" for exact details.' });
+    }
+    return rows;
+  }
+
+  function renderMonitor(m) {
+    const el = $('monitor');
+    if (!m.multiple) {
+      el.hidden = true;
+      el.innerHTML = '';
+      return;
+    }
+    el.hidden = false;
+    const canAsk = !m.exact && 'getScreenDetails' in window && state.monitorPermission !== 'denied';
+    const title = m.exact ? `This window is on Monitor ${m.current.number} of ${m.count}` : `This window is on the ${m.primary ? 'primary' : 'secondary'} monitor`;
+    const sub = m.exact
+      ? `${m.placement} · ${dims(m.current.width, m.current.height)} at ${m.current.scaling}% · numbered left to right, ★ = primary`
+      : `${m.placement} (estimated from window position)`;
+    let note = '';
+    if (state.monitorPermission === 'denied') note = 'Permission to see all monitors is blocked. Allow "Window management" in this site\'s settings for exact details.';
+    else if (canAsk) note = 'Your browser will ask permission to see your display layout.';
+
+    let diagram = '';
+    if (m.exact && m.list.length > 1) {
+      const minX = Math.min(...m.list.map((s) => s.left));
+      const minY = Math.min(...m.list.map((s) => s.top));
+      const w = Math.max(...m.list.map((s) => s.left + s.logicalW)) - minX;
+      const h = Math.max(...m.list.map((s) => s.top + s.logicalH)) - minY;
+      const pct = (v, total) => `${(v / total) * 100}%`;
+      diagram = `
+        <div class="monitor-map" style="width:${Math.min(260, (64 * w) / h)}px;aspect-ratio:${w} / ${h}" aria-hidden="true">
+          ${m.list.map((s) => `
+            <div class="monitor-box${s.current ? ' is-current' : ''}" style="left:${pct(s.left - minX, w)};top:${pct(s.top - minY, h)};width:${pct(s.logicalW, w)};height:${pct(s.logicalH, h)}"
+              title="Monitor ${s.number}: ${esc(dims(s.width, s.height))}${s.primary ? ' (primary)' : ''}">
+              ${s.number}${s.primary ? '<span class="monitor-primary">★</span>' : ''}
+            </div>`).join('')}
+        </div>`;
+    }
+
+    el.innerHTML = `
+      <svg class="monitor-icon" viewBox="0 0 32 32" aria-hidden="true">
+        <rect x="3" y="5" width="26" height="17" rx="2.5" fill="none" stroke="currentColor" stroke-width="2.5"/>
+        <path d="M11 27h10M16 22v5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+      </svg>
+      <div class="monitor-text">
+        <div class="monitor-title${flashClass('monitor', title)}">${esc(title)}</div>
+        <div class="muted">${esc(sub)}</div>
+        ${note ? `<div class="monitor-note muted">${esc(note)}</div>` : ''}
+      </div>
+      ${diagram}
+      ${canAsk ? '<button type="button" class="btn" data-action="identify-monitors">Identify all monitors</button>' : ''}`;
+  }
+
+  // ---------- summary cards ----------
+
+  function zoomBadge(zoom) {
+    if (!zoom) return { text: 'Unknown', cls: 'badge-info' };
+    if (zoom === 100) return { text: 'Not zoomed', cls: 'badge-ok' };
+    return { text: zoom > 100 ? 'Zoomed in' : 'Zoomed out', cls: 'badge-warn' };
+  }
+
+  function summaryCards(d) {
+    const zoom = d.zoom.zoom;
+    return [
+      { key: 'h-res', label: 'Screen resolution', value: dims(d.physW, d.physH), sub: `${aspectRatio(d.physW, d.physH)} · ${dims(d.sw, d.sh)} logical` },
+      { key: 'h-zoom', label: 'Browser zoom', value: zoom ? `${zoom}%` : '—', badge: zoomBadge(zoom), sub: d.zoom.estimated ? 'Estimated' : zoom ? 'Ctrl + 0 resets to 100%' : 'Not detectable here' },
+      { key: 'h-scale', label: 'Display scaling', value: `${d.os}%`, sub: `Device pixel ratio ${fmt(d.dpr, 3)}` },
+      { key: 'h-vp', label: 'Browser viewport', value: dims(window.innerWidth, window.innerHeight), sub: `Window ${dims(window.outerWidth, window.outerHeight)}` },
+    ];
+  }
+
+  // ---------- full report (JSON only) ----------
+
+  function windowOnScreen() {
+    const sw = screen.width;
+    const sh = screen.height;
+    const originX = 'left' in screen ? screen.left : screen.availLeft || 0;
+    const originY = 'top' in screen ? screen.top : screen.availTop || 0;
+    const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+    const wx = clamp(window.screenX - originX, 0, sw);
+    const wy = clamp(window.screenY - originY, 0, sh);
+    const ww = clamp(window.outerWidth, 0, sw - wx);
+    const wh = clamp(window.outerHeight, 0, sh - wy);
+    return [
+      { label: 'Screen size', value: dims(sw, sh) },
+      { label: 'Window position on screen', value: `x ${fmt(wx)}, y ${fmt(wy)}` },
+      { label: 'Window size', value: dims(window.outerWidth, window.outerHeight) },
+      { label: 'Screen covered by window', value: sw && sh ? `${fmt(((ww * wh) / (sw * sh)) * 100)}%` : 'Unknown' },
+      { label: 'Maximized', value: yesNo(ww >= screen.availWidth - 2 && wh >= screen.availHeight - 2) },
+    ];
+  }
 
   function collect() {
     const browser = detectBrowser();
@@ -281,88 +424,88 @@
       if (entry) browserVersion = entry.version;
     }
 
-    const gpu = state.gpu === undefined ? (state.gpu = detectGpu()) : state.gpu;
     const zoom = d.zoom.zoom;
+    const m = monitorInfo();
+    const summary = summaryCards(d).map((c) => ({ label: c.label, value: c.badge ? `${c.value} (${c.badge.text})` : c.value }));
+    if (m.multiple) {
+      summary.push({
+        label: 'Monitor',
+        value: m.exact ? `Monitor ${m.current.number} of ${m.count} (${m.placement})` : m.placement,
+      });
+    }
 
     const sections = [
       {
+        title: 'Summary',
+        rows: summary,
+      },
+      {
+        title: 'Monitor',
+        rows: monitorRows(m),
+      },
+      {
         title: 'Display',
         rows: [
-          { label: 'Screen resolution', value: dims(d.physW, d.physH), hint: d.os !== 100 ? `${dims(d.sw, d.sh)} logical pixels × ${d.os}% scaling` : 'Device pixels' },
-          { label: 'Logical resolution', value: dims(d.sw, d.sh), hint: 'What websites see as screen.width × screen.height (CSS pixels)' },
-          { label: 'Available area', value: dims(screen.availWidth, screen.availHeight), hint: 'Screen minus taskbar / dock / menu bar' },
+          { label: 'Screen resolution', value: dims(d.physW, d.physH) },
+          { label: 'Logical resolution', value: dims(d.sw, d.sh) },
+          { label: 'Available area', value: dims(screen.availWidth, screen.availHeight) },
           { label: 'Aspect ratio', value: aspectRatio(d.physW, d.physH) },
-          { label: 'Display scaling', value: `${d.os}%`, hint: 'OS-level scaling (Windows "Scale" / macOS HiDPI)' },
-          { label: 'Refresh rate', value: state.refreshHz ? `${fmt(state.refreshHz)} Hz` : state.measuringRefresh ? 'Measuring…' : '—', hint: 'Measured from browser frame timing' },
+          { label: 'Display scaling', value: `${d.os}%` },
+          { label: 'Refresh rate', value: state.refreshHz ? `${fmt(state.refreshHz)} Hz` : 'Unknown' },
           { label: 'Color depth', value: `${screen.colorDepth}-bit` },
           { label: 'Color gamut', value: gamut },
           { label: 'HDR', value: mq('(dynamic-range: high)') ? 'Supported' : 'Not detected' },
           { label: 'Orientation', value: orientation },
-          { label: 'Multiple monitors', value: 'isExtended' in screen ? yesNo(screen.isExtended) : 'Unknown' },
         ],
       },
       {
         title: 'Browser window & zoom',
         rows: [
-          { label: 'Browser zoom', value: zoom ? `${zoom}%` : 'Unknown', hint: d.zoom.method },
-          { label: 'Device pixel ratio', value: fmt(d.dpr, 4), hint: 'Display scaling × browser zoom' },
-          { label: 'Viewport size', value: dims(window.innerWidth, window.innerHeight), hint: 'window.innerWidth × innerHeight, including scrollbars' },
-          { label: 'Viewport (no scrollbars)', value: dims(de.clientWidth, de.clientHeight), hint: 'What CSS media queries use' },
-          { label: 'Window size', value: dims(window.outerWidth, window.outerHeight), hint: 'Whole browser window including tabs and toolbars' },
+          { label: 'Browser zoom', value: zoom ? `${zoom}%` : 'Unknown' },
+          { label: 'Zoom detection method', value: d.zoom.method },
+          { label: 'Device pixel ratio', value: fmt(d.dpr, 4) },
+          { label: 'Viewport size', value: dims(window.innerWidth, window.innerHeight) },
+          { label: 'Viewport (no scrollbars)', value: dims(de.clientWidth, de.clientHeight) },
+          { label: 'Window size', value: dims(window.outerWidth, window.outerHeight) },
           { label: 'Window position', value: `x ${fmt(window.screenX)}, y ${fmt(window.screenY)}` },
           { label: 'Scrollbar width', value: `${fmt(window.innerWidth - de.clientWidth)} px` },
-          { label: 'Pinch zoom', value: vv ? `${fmt(vv.scale * 100, 1)}%` : 'Unknown', hint: vv && vv.scale !== 1 ? `Visible area ${dims(vv.width, vv.height)}` : undefined },
+          { label: 'Pinch zoom', value: vv ? `${fmt(vv.scale * 100, 1)}%` : 'Unknown' },
           { label: 'Zoom changed since load', value: zoomChanged ? `Yes (DPR ${fmt(state.initialDpr, 3)} → ${fmt(d.dpr, 3)})` : 'No' },
           { label: 'Page size', value: dims(de.scrollWidth, de.scrollHeight) },
         ],
       },
       {
-        title: 'System & browser',
+        title: 'Window on screen',
+        rows: windowOnScreen(),
+      },
+      ...(m.exact && m.multiple ? [{
+        title: 'All monitors',
+        rows: m.list.map((s) => ({
+          label: `Monitor ${s.number}`,
+          value: [
+            dims(s.width, s.height),
+            `${s.scaling}% scaling`,
+            `position x ${fmt(s.left)}, y ${fmt(s.top)}`,
+            s.primary && 'primary',
+            s.internal && 'built-in',
+            s.current && 'this window',
+          ].filter(Boolean).join(' · '),
+        })),
+      }] : []),
+      {
+        // Deliberately excludes anything that could identify or locate a person: no user agent,
+        // language, time zone, hardware/GPU details, accessibility settings or page address.
+        title: 'Browser & device',
         rows: [
           { label: 'Browser', value: `${browser.name} ${browserVersion}`.trim() },
           { label: 'Rendering engine', value: { blink: 'Blink', gecko: 'Gecko', webkit: 'WebKit' }[browser.engine] || 'Unknown' },
           { label: 'Operating system', value: detectOS() },
-          { label: 'Architecture', value: hi && hi.architecture ? `${hi.architecture}${hi.bitness ? ` ${hi.bitness}-bit` : ''}` : 'Unknown' },
-          { label: 'Device model', value: hi && hi.model ? hi.model : undefined },
-          { label: 'CPU threads', value: navigator.hardwareConcurrency ? String(navigator.hardwareConcurrency) : 'Unknown' },
-          { label: 'Memory', value: navigator.deviceMemory ? `${navigator.deviceMemory} GB or more` : 'Unknown', hint: navigator.deviceMemory ? 'Browsers cap this value at 8 GB' : undefined },
-          { label: 'Graphics', value: gpu ? gpu.name : 'Unknown', hint: gpu && gpu.raw !== gpu.name ? gpu.raw : undefined },
-          { label: 'Touch points', value: String(navigator.maxTouchPoints || 0) },
           { label: 'Primary input', value: pointer },
-          { label: 'Language', value: navigator.language || 'Unknown' },
-          { label: 'Time zone', value: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Unknown' },
-          { label: 'Cookies enabled', value: yesNo(navigator.cookieEnabled) },
-          { label: 'User agent', value: navigator.userAgent, wide: true },
-        ],
-      },
-      {
-        title: 'Preferences',
-        rows: [
-          { label: 'Color scheme', value: mq('(prefers-color-scheme: dark)') ? 'Dark' : 'Light' },
-          { label: 'Reduced motion', value: mq('(prefers-reduced-motion: reduce)') ? 'On' : 'Off' },
-          { label: 'Contrast', value: mq('(prefers-contrast: more)') ? 'More' : mq('(prefers-contrast: less)') ? 'Less' : 'Default' },
-          { label: 'Forced colors', value: mq('(forced-colors: active)') ? 'Active (high contrast)' : 'Off' },
         ],
       },
     ];
 
-    if (state.monitors) {
-      sections.splice(1, 0, {
-        title: `Connected monitors (${state.monitors.length})`,
-        rows: state.monitors.map((m, i) => {
-          const tags = [m.primary && 'primary', m.internal && 'built-in', m.current && 'this window'].filter(Boolean);
-          return {
-            label: `${m.label || `Monitor ${i + 1}`}${tags.length ? ` (${tags.join(', ')})` : ''}`,
-            value: dims(Math.round(m.width * m.dpr), Math.round(m.height * m.dpr)),
-            hint: `${dims(m.width, m.height)} logical at ${fmt(m.dpr * 100)}% scaling · position ${fmt(m.left)}, ${fmt(m.top)}`,
-          };
-        }),
-      });
-    }
-
-    sections.forEach((s) => { s.rows = s.rows.filter((r) => r.value !== undefined); });
-
-    return { browser, d, sections };
+    return sections;
   }
 
   // ---------- rendering ----------
@@ -373,118 +516,30 @@
     return prev !== undefined && prev !== value ? ' changed' : '';
   }
 
-  function zoomBadge(zoom) {
-    if (!zoom) return '<span class="badge badge-info">Unknown</span>';
-    if (zoom === 100) return '<span class="badge badge-ok">Not zoomed</span>';
-    return zoom > 100 ? '<span class="badge badge-warn">Zoomed in</span>' : '<span class="badge badge-warn">Zoomed out</span>';
-  }
-
-  function renderHero({ d }) {
-    const zoom = d.zoom.zoom;
-    const cards = [
-      { key: 'h-res', label: 'Screen resolution', value: dims(d.physW, d.physH), sub: `${aspectRatio(d.physW, d.physH)} · ${dims(d.sw, d.sh)} logical` },
-      { key: 'h-zoom', label: 'Browser zoom', value: zoom ? `${zoom}%` : '—', badge: zoomBadge(zoom), sub: d.zoom.estimated ? 'Estimated' : zoom ? 'Ctrl + 0 resets to 100%' : 'Not detectable here' },
-      { key: 'h-scale', label: 'Display scaling', value: `${d.os}%`, sub: `Device pixel ratio ${fmt(d.dpr, 3)}` },
-      { key: 'h-vp', label: 'Browser viewport', value: dims(window.innerWidth, window.innerHeight), sub: `Window ${dims(window.outerWidth, window.outerHeight)}` },
-    ];
-    $('hero').innerHTML = cards.map((c) => `
+  function render() {
+    const d = computeDisplay(detectBrowser());
+    $('hero').innerHTML = summaryCards(d).map((c) => `
       <div class="stat">
-        <div class="stat-label">${esc(c.label)}${c.badge || ''}</div>
+        <div class="stat-label">${esc(c.label)}${c.badge ? `<span class="badge ${c.badge.cls}">${esc(c.badge.text)}</span>` : ''}</div>
         <div class="stat-value${flashClass(c.key, c.value)}">${esc(c.value)}</div>
         <div class="stat-sub">${esc(c.sub)}</div>
       </div>`).join('');
-  }
-
-  function renderSections({ sections }) {
-    $('sections').innerHTML = sections.map((s) => `
-      <section class="card">
-        <h2>${esc(s.title)}</h2>
-        <dl class="rows">
-          ${s.rows.map((r) => `
-            <div class="row${r.wide ? ' row-wide' : ''}">
-              <dt>${esc(r.label)}</dt>
-              <dd class="${flashClass(`${s.title}/${r.label}`, r.value)}">${esc(r.value)}</dd>
-              ${r.hint ? `<div class="hint">${esc(r.hint)}</div>` : ''}
-            </div>`).join('')}
-        </dl>
-      </section>`).join('');
-  }
-
-  function renderViz() {
-    const sw = screen.width;
-    const sh = screen.height;
-    if (!sw || !sh) return;
-    const originX = 'left' in screen ? screen.left : screen.availLeft || 0;
-    const originY = 'top' in screen ? screen.top : screen.availTop || 0;
-    const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
-    const pct = (v, total) => `${(v / total) * 100}%`;
-
-    const wx = clamp(window.screenX - originX, 0, sw);
-    const wy = clamp(window.screenY - originY, 0, sh);
-    const ww = clamp(window.outerWidth, 0, sw - wx);
-    const wh = clamp(window.outerHeight, 0, sh - wy);
-    const ax = clamp((screen.availLeft || 0) - originX, 0, sw);
-    const ay = clamp((screen.availTop || 0) - originY, 0, sh);
-
-    $('viz').innerHTML = `
-      <div class="viz-screen" style="aspect-ratio:${sw} / ${sh}">
-        <div class="viz-avail" style="left:${pct(ax, sw)};top:${pct(ay, sh)};width:${pct(screen.availWidth, sw)};height:${pct(screen.availHeight, sh)}"></div>
-        <div class="viz-window" style="left:${pct(wx, sw)};top:${pct(wy, sh)};width:${pct(ww, sw)};height:${pct(wh, sh)}">
-          <span>${esc(dims(window.outerWidth, window.outerHeight))}</span>
-        </div>
-        <span class="viz-screen-label">${esc(dims(sw, sh))}</span>
-      </div>
-      <div class="viz-caption">Window covers ${fmt(((ww * wh) / (sw * sh)) * 100)}% of the screen</div>`;
-  }
-
-  function render() {
-    const data = collect();
-    state.lastReport = data;
-    renderHero(data);
-    renderSections(data);
-    renderViz();
+    renderMonitor(monitorInfo());
   }
 
   // ---------- export ----------
 
-  function reportText() {
-    const { sections } = state.lastReport || collect();
-    const lines = [`Screen Resolution Checker report — ${new Date().toLocaleString()}`, location.href, ''];
-    sections.forEach((s) => {
-      lines.push(s.title.toUpperCase());
-      s.rows.forEach((r) => lines.push(`  ${r.label}: ${r.value}`));
-      lines.push('');
-    });
-    return lines.join('\n');
-  }
-
   function reportJson() {
-    const { sections } = state.lastReport || collect();
     const out = { generatedAt: new Date().toISOString() };
-    sections.forEach((s) => {
+    collect().forEach((s) => {
       out[s.title] = Object.fromEntries(s.rows.map((r) => [r.label, r.value]));
     });
     return JSON.stringify(out, null, 2);
   }
 
-  async function copyReport() {
-    const text = reportText();
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch (e) {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      ta.remove();
-    }
-    toast('Report copied to clipboard.');
-  }
-
-  function downloadJson() {
+  async function downloadJson() {
+    // Make sure the refresh rate is included even if the button is clicked right after load.
+    if (!state.refreshHz) await Promise.race([updateRefreshRate(), new Promise((r) => setTimeout(r, 2000))]);
     const blob = new Blob([reportJson()], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -495,15 +550,6 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
-  let toastTimer;
-  function toast(message) {
-    const el = $('toast');
-    el.textContent = message;
-    el.classList.add('show');
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
-  }
-
   // ---------- live updates ----------
 
   let frame = 0;
@@ -512,39 +558,37 @@
     frame = requestAnimationFrame(render);
   };
 
-  // There's no event for window moves or every media change, so poll a cheap signature.
+  // There's no event for every zoom or monitor change, so poll a cheap signature.
   let lastSignature = '';
   let lastScreenKey = '';
   function poll() {
-    const vv = window.visualViewport;
     const sig = [
-      window.innerWidth, window.innerHeight, window.outerWidth, window.outerHeight, window.screenX, window.screenY,
-      screen.width, screen.height, screen.availWidth, screen.availHeight, window.devicePixelRatio,
-      vv ? vv.scale : 1, mq('(prefers-color-scheme: dark)'), mq('(dynamic-range: high)'),
+      window.innerWidth, window.innerHeight, window.outerWidth, window.outerHeight,
+      screen.width, screen.height, screen.availLeft, screen.availTop, window.devicePixelRatio,
     ].join('|');
     if (sig !== lastSignature) {
       lastSignature = sig;
       scheduleRender();
     }
     // Moving to another monitor can change the refresh rate.
-    const screenKey = [screen.width, screen.height, window.devicePixelRatio].join('|');
+    const screenKey = [screen.width, screen.height, screen.availLeft, screen.availTop, window.devicePixelRatio].join('|');
     if (lastScreenKey && screenKey !== lastScreenKey) updateRefreshRate();
     lastScreenKey = screenKey;
   }
 
   window.addEventListener('resize', scheduleRender);
-  if (window.visualViewport) window.visualViewport.addEventListener('resize', scheduleRender);
   if (screen.orientation) screen.orientation.addEventListener('change', scheduleRender);
   document.addEventListener('visibilitychange', () => { if (!document.hidden && !state.refreshHz) updateRefreshRate(); });
 
-  $('btn-copy').addEventListener('click', copyReport);
   $('btn-json').addEventListener('click', downloadJson);
-  $('btn-refresh').addEventListener('click', updateRefreshRate);
-  $('btn-monitors').addEventListener('click', detectMonitors);
+  $('monitor').addEventListener('click', (e) => {
+    if (e.target.closest('[data-action="identify-monitors"]')) loadScreenDetails();
+  });
 
   render();
   poll();
   setInterval(poll, 500);
   updateRefreshRate();
   loadUaDetails();
+  initMonitors();
 })();

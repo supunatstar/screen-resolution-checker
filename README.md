@@ -1,15 +1,38 @@
 # Screen Resolution Checker
 
-A single-page web app that shows your screen and browser details, live:
+A single-page web app that shows four live summary cards:
 
-- **Screen resolution:** physical pixels, logical (CSS) pixels, available area and aspect ratio
+- **Screen resolution:** physical pixels, aspect ratio and logical (CSS) pixels
 - **Browser zoom:** the current zoom level and whether the page is zoomed in or out
 - **Display scaling:** OS scaling (for example Windows 125%) and device pixel ratio
-- **Window and viewport:** viewport size, window size and position, scrollbar width, pinch zoom
-- **Display capabilities:** refresh rate, color depth, color gamut, HDR, orientation
-- **All monitors:** resolution and scaling of every connected screen (Chrome and Edge, needs permission)
-- **System:** browser, OS, CPU threads, memory, GPU, input type and accessibility preferences
-- **Export:** copy a text report or download it as JSON
+- **Browser viewport:** viewport size and window size
+
+With more than one monitor connected, a bar below the cards shows which monitor the window is on:
+
+- **Without permission:** the window's position on the desktop shows whether this is the primary or a secondary monitor, and which side of the primary it's on.
+- **With permission:** in Chrome and Edge, clicking **Identify all monitors** asks for the browser's *window management* permission. The page then shows "Monitor 2 of 3" and a diagram of the monitor layout. Monitors are numbered left to right, and the current one is highlighted.
+
+The **Download JSON** button saves a full report. Besides the summary, it includes:
+
+- **Monitor:** whether several monitors are connected, which one this window is on, whether it's the primary, and where it sits relative to the primary
+- **All monitors:** when permission is granted, the resolution, scaling and position of each monitor, with the current one marked
+
+- **Display:** available area, refresh rate, color depth, color gamut, HDR, orientation, multiple monitors
+- **Browser window and zoom:** zoom detection method, viewport without scrollbars, window position, scrollbar width, pinch zoom, page size
+- **Window on screen:** where the window sits on the screen, how much of the screen it covers, whether it's maximized
+- **Browser and device:** browser name and version, rendering engine, operating system, primary input type
+
+### Privacy
+
+The report leaves out anything that could identify or locate a person, or that is commonly used to fingerprint a browser:
+
+- the full user agent string
+- language and time zone
+- CPU, memory, GPU and device model
+- accessibility settings, such as reduced motion, contrast and forced colors, which can reveal health information
+- the page address, which can contain a local file path or username
+
+Nothing is sent anywhere. The report is created in the browser and saved only when the user clicks **Download JSON**.
 
 The app is plain HTML, CSS and JavaScript with no build step and no dependencies. Nothing leaves the browser.
 
