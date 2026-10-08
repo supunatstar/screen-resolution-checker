@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Screen Resolution Checker</title>
+  <meta name="description" content="Check your screen resolution, browser zoom level, display scaling, viewport size, refresh rate and more — instantly, right in your browser.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='5' width='26' height='17' rx='2.5' fill='none' stroke='%232f6fed' stroke-width='2.5'/%3E%3Cpath d='M11 27h10M16 22v5' stroke='%232f6fed' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <div class="brand">
+        <svg class="brand-icon" viewBox="0 0 32 32" aria-hidden="true">
+          <rect x="3" y="5" width="26" height="17" rx="2.5" fill="none" stroke="currentColor" stroke-width="2.5"/>
+          <path d="M11 27h10M16 22v5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+        </svg>
+        <div>
+          <h1>Screen Resolution Checker</h1>
+          <p class="tagline">Your display, zoom and browser details, live.</p>
+        </div>
+      </div>
+      <span class="live"><span class="live-dot"></span>Live</span>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <noscript><p class="notice">This page needs JavaScript to read your screen information.</p></noscript>
+
+    <section class="hero" id="hero" aria-label="Summary"></section>
+
+    <section class="toolbar" aria-label="Actions">
+      <button type="button" id="btn-copy" class="btn btn-primary">Copy report</button>
+      <button type="button" id="btn-json" class="btn">Download JSON</button>
+      <button type="button" id="btn-refresh" class="btn">Re-measure refresh rate</button>
+      <button type="button" id="btn-monitors" class="btn">Detect all monitors</button>
+    </section>
+
+    <section class="card viz-card" aria-label="Window position on screen">
+      <div class="viz-text">
+        <h2>Window on screen</h2>
+        <p class="muted">Where this browser window sits on your current screen. Resize or move the window, change zoom, or drag it to another monitor and the values update automatically.</p>
+      </div>
+      <div class="viz" id="viz"></div>
+    </section>
+
+    <div class="sections" id="sections"></div>
+  </main>
+
+  <footer class="wrap site-footer">
+    <p>Everything is detected locally in your browser. Nothing is sent or stored anywhere.</p>
+  </footer>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
