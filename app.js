@@ -331,7 +331,7 @@
     const title = m.exact ? `This window is on Monitor ${m.current.number} of ${m.count}` : `This window is on the ${m.primary ? 'primary' : 'secondary'} monitor`;
     const sub = m.exact
       ? `${m.placement} · ${dims(m.current.width, m.current.height)} at ${m.current.scaling}% · numbered left to right, ★ = primary`
-      : `${m.placement} (estimated from window position)`;
+      : m.primary ? 'Estimated from window position' : `${m.placement} (estimated from window position)`;
     let note = '';
     if (state.monitorPermission === 'denied') note = 'Permission to see all monitors is blocked. Allow "Window management" in this site\'s settings for exact details.';
     else if (canAsk) note = 'Your browser will ask permission to see your display layout.';
@@ -516,15 +516,22 @@
     return prev !== undefined && prev !== value ? ' changed' : '';
   }
 
+  // Rebuilds the page only when something it shows has changed, so it's cheap to call often.
+  let lastRendered = '';
   function render() {
-    const d = computeDisplay(detectBrowser());
-    $('hero').innerHTML = summaryCards(d).map((c) => `
+    const cards = summaryCards(computeDisplay(detectBrowser()));
+    const m = monitorInfo();
+    const signature = JSON.stringify([cards, m, state.monitorPermission]);
+    if (signature === lastRendered) return;
+    lastRendered = signature;
+
+    $('hero').innerHTML = cards.map((c) => `
       <div class="stat">
         <div class="stat-label">${esc(c.label)}${c.badge ? `<span class="badge ${c.badge.cls}">${esc(c.badge.text)}</span>` : ''}</div>
         <div class="stat-value${flashClass(c.key, c.value)}">${esc(c.value)}</div>
         <div class="stat-sub">${esc(c.sub)}</div>
       </div>`).join('');
-    renderMonitor(monitorInfo());
+    renderMonitor(m);
   }
 
   // ---------- export ----------
@@ -558,18 +565,11 @@
     frame = requestAnimationFrame(render);
   };
 
-  // There's no event for every zoom or monitor change, so poll a cheap signature.
-  let lastSignature = '';
+  // Not every change has an event (zoom, window moves, Chrome reporting extra monitors a moment
+  // after load), so re-check everything the page shows twice a second; render() skips no-ops.
   let lastScreenKey = '';
   function poll() {
-    const sig = [
-      window.innerWidth, window.innerHeight, window.outerWidth, window.outerHeight,
-      screen.width, screen.height, screen.availLeft, screen.availTop, window.devicePixelRatio,
-    ].join('|');
-    if (sig !== lastSignature) {
-      lastSignature = sig;
-      scheduleRender();
-    }
+    render();
     // Moving to another monitor can change the refresh rate.
     const screenKey = [screen.width, screen.height, screen.availLeft, screen.availTop, window.devicePixelRatio].join('|');
     if (lastScreenKey && screenKey !== lastScreenKey) updateRefreshRate();
@@ -578,6 +578,10 @@
 
   window.addEventListener('resize', scheduleRender);
   if (screen.orientation) screen.orientation.addEventListener('change', scheduleRender);
+  // Fired by Chrome/Edge when monitors are connected, disconnected or rearranged.
+  if ('onchange' in screen) screen.addEventListener('change', scheduleRender);
+  window.addEventListener('load', scheduleRender);
+  document.addEventListener('visibilitychange', scheduleRender);
   document.addEventListener('visibilitychange', () => { if (!document.hidden && !state.refreshHz) updateRefreshRate(); });
 
   $('btn-json').addEventListener('click', downloadJson);
@@ -585,7 +589,6 @@
     if (e.target.closest('[data-action="identify-monitors"]')) loadScreenDetails();
   });
 
-  render();
   poll();
   setInterval(poll, 500);
   updateRefreshRate();
